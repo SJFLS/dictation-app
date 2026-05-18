@@ -1,0 +1,8 @@
+{
+  "appId": "com.dictation.app",
+  "appName": "单词听写",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

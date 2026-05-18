@@ -1,0 +1,14 @@
+{
+  "name": "dictation-app",
+  "version": "1.0.0",
+  "description": "单词听写 App",
+  "scripts": {
+    "build": "echo 'No build step'",
+    "sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  }
+}

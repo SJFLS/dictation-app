@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>自定义单词听写 HTML</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(160deg, #06172c, #123454);
+    color: #fff;
+    min-height: 100vh;
+    padding: 18px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 8px 0 8px; letter-spacing: .5px; }
+  .sub { color: #c8d7e8; line-height: 1.6; margin-bottom: 14px; }
+  .tip {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 16px;
+    padding: 12px;
+    color: #d7e6f7;
+    font-size: 14px;
+    line-height: 1.55;
+    margin-bottom: 14px;
+  }
+  .panel {
+    background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 22px;
+    padding: 16px;
+    margin-bottom: 14px;
+    backdrop-filter: blur(8px);
+  }
+  .label { color: #9fb6d2; font-size: 13px; margin-bottom: 8px; }
+  #currentEn { font-size: 34px; font-weight: 700; line-height: 1.2; word-break: break-word; }
+  #currentZh { font-size: 22px; color: #b9e8ff; margin-top: 8px; }
+  body.hide-cards #currentEn,
+  body.hide-cards #currentZh { visibility: hidden; }
+  body.hide-cards .dictation-mask { display: block; }
+  .dictation-mask {
+    display: none;
+    margin-top: 10px;
+    color: #b9e8ff;
+    font-size: 18px;
+    line-height: 1.6;
+  }
+  #status { color: #b9e8ff; font-size: 14px; margin-top: 10px; min-height: 20px; line-height:1.55; }
+  select, input, textarea {
+    width: 100%;
+    border: 0;
+    outline: 0;
+    border-radius: 16px;
+    padding: 13px 14px;
+    font-size: 16px;
+    margin: 7px 0 12px;
+    font-family: inherit;
+  }
+  textarea {
+    min-height: 170px;
+    resize: vertical;
+    line-height: 1.55;
+  }
+  input[type="range"] { padding: 0; accent-color: #dff6ff; }
+  .controls { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  body.hide-cards #search,
+  body.hide-cards #grid,
+  body.hide-cards #inputPanel { display: none; }
+  button.item {
+    border: 0; border-radius: 18px; background: #fff; color: #07172d;
+    padding: 14px; min-height: 82px; text-align: left;
+    box-shadow: 0 8px 18px rgba(0,0,0,.16);
+  }
+  button.item:active { transform: scale(.98); }
+  .en { font-size: 19px; font-weight: 700; line-height: 1.25; }
+  .zh { font-size: 14px; color: #526070; margin-top: 5px; }
+  .tool {
+    border: 0; border-radius: 16px; padding: 12px;
+    background: rgba(255,255,255,.16); color: white; font-size: 15px;
+  }
+  .primary { background: #dff6ff; color: #07172d; font-weight: 700; }
+  .danger { background: rgba(255,255,255,.08); color: #fff; }
+  .next-btn {
+    display: none;
+    width: 100%;
+    margin: 14px 0;
+    border: 0;
+    border-radius: 22px;
+    padding: 18px 16px;
+    background: #dff6ff;
+    color: #07172d;
+    font-size: 22px;
+    font-weight: 800;
+    box-shadow: 0 10px 22px rgba(0,0,0,.18);
+  }
+  body.hide-cards .next-btn { display: block; }
+  .progress {
+    display: none;
+    text-align: center;
+    color: #d7e6f7;
+    margin: 6px 0 12px;
+    font-size: 15px;
+  }
+  body.hide-cards .progress { display: block; }
+  @media (min-width: 720px) {
+    .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .controls { grid-template-columns: 1fr 1fr; align-items: end; }
+    h1 { font-size: 40px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="label">Dictation HTML</div>
+    <h1>自定义单词 / 句子听写</h1>
+    <div class="sub">粘贴一整段内容也可以，只会提取“带序号”的单词或句子，自动去掉标题、空行、结尾说明等无关内容。</div>
+
+    <div class="tip">
+      支持自动提取：<br>
+      1. spring<br>
+      2、summer<br>
+      3）What's the weather like?<br>
+      4. spring 春天<br>
+      不带序号的“单词&短语部分 / 句子部分 / 需要我顺便……”会自动忽略。
+    </div>
+
+    <div id="inputPanel" class="panel">
+      <div class="label">粘贴整段内容</div>
+      <textarea id="wordInput" placeholder="把带序号的大段内容粘贴到这里。输入框默认是空的。"></textarea>
+      <div class="row">
+        <button class="tool primary" onclick="generateCards()">提取序号并生成卡片</button>
+        <button class="tool danger" onclick="clearInput()">清空输入</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label">当前听写</div>
+      <div id="currentEn">先粘贴内容并生成卡片</div>
+      <div id="currentZh"></div>
+      <div class="dictation-mask">听写模式中：文字已隐藏，请根据语音默写。</div>
+      <div id="status"></div>
+      <div class="row" style="margin-top:12px;">
+        <button class="tool primary" onclick="repeatCurrent()">再读一遍</button>
+        <button class="tool" onclick="stopSpeak()">停止</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="controls">
+        <div>
+          <div class="label">英文声音</div>
+          <select id="enVoice">
+            <option value="en-US-JennyNeural">Jenny 美式女声</option>
+            <option value="en-US-AriaNeural">Aria 美式女声</option>
+            <option value="en-US-AnaNeural">Ana 美式儿童女声</option>
+            <option value="en-US-GuyNeural">Guy 美式男声</option>
+            <option value="en-GB-SoniaNeural" selected>Sonia 英式女声</option>
+            <option value="en-GB-RyanNeural">Ryan 英式男声</option>
+          </select>
+        </div>
+        <div>
+          <div class="label">中文声音</div>
+          <select id="zhVoice">
+            <option value="zh-CN-XiaoxiaoNeural" selected>晓晓 女声</option>
+            <option value="zh-CN-XiaoyiNeural">晓伊 女声</option>
+            <option value="zh-CN-YunxiNeural">云希 男声</option>
+            <option value="zh-CN-YunyangNeural">云扬 男声</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div>
+          <div class="label">英文速度：<span id="speedText">1</span></div>
+          <input id="speed" type="range" min="0.5" max="1.2" step="0.05" value="1" oninput="speedText.textContent=this.value">
+        </div>
+        <div>
+          <div class="label">模式</div>
+          <select id="mode">
+            <option value="twice-cn" selected>英文两遍 → 中文</option>
+            <option value="once-cn">英文一遍 → 中文</option>
+            <option value="en-only">只读英文</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="tool primary" onclick="testApi()">测试接口</button>
+        <button class="tool" onclick="downloadCurrent()">下载当前音频</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <button id="toggleCardsBtn" class="tool primary" onclick="toggleCards()">隐藏单词卡片</button>
+        <button class="tool" onclick="resetSequence()">顺序重置</button>
+      </div>
+    </div>
+
+    <button id="nextBtn" class="next-btn" onclick="nextWord()">下一个</button>
+    <div id="progress" class="progress">准备开始</div>
+
+    <input id="search" placeholder="搜索单词 / 句子..." oninput="render()" />
+    <div class="grid" id="grid"></div>
+  </div>
+
+<script>
+const API = "https://tts.wangwangit.com/v1/audio/speech";
+
+const zhDict = {
+  "spring": "春天",
+  "summer": "夏天",
+  "autumn": "秋天",
+  "winter": "冬天",
+  "warm": "温暖的",
+  "hot": "热的",
+  "cool": "凉爽的",
+  "cold": "寒冷的；冷的",
+  "sunny": "晴朗的",
+  "cloudy": "多云的",
+  "windy": "有风的",
+  "snowy": "下雪的",
+  "season": "季节",
+  "weather": "天气",
+  "snowball": "雪球",
+  "umbrella": "雨伞",
+  "dry": "干燥的",
+  "wet": "湿的",
+  "carefully": "小心地；仔细地",
+  "fly kites": "放风筝",
+  "swim in the water": "在水里游泳",
+  "throw snowballs": "扔雪球",
+  "what's the weather like?": "天气怎么样？",
+  "hows the weather?": "天气怎么样？",
+  "how's the weather?": "天气怎么样？",
+  "it's sunny.": "天气晴朗。",
+  "what's your favourite season?": "你最喜欢的季节是什么？",
+  "what's your favorite season?": "你最喜欢的季节是什么？",
+  "i like winter best.": "我最喜欢冬天。",
+  "on a rainy day, we run and jump.": "在下雨天，我们跑步和跳跃。",
+  "i've got my hat and dress": "我有我的帽子和连衣裙。",
+  "i've got my hat and dress.": "我有我的帽子和连衣裙。"
+};
+
+function lookupZh(en) {
+  const key = normalizeText(en).toLowerCase().replace(/\s+/g, " ");
+  return zhDict[key] || "";
+}
+
+let items = [];
+let current = null;
+let currentIndex = -1;
+let currentAudio = null;
+let lastBlobUrl = null;
+let lastBlob = null;
+let isHiddenMode = false;
+
+function setStatus(text) {
+  document.getElementById("status").textContent = text || "";
+}
+
+function stopSpeak() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  setStatus("");
+}
+
+function cleanupBlobUrl() {
+  if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+  lastBlobUrl = null;
+  lastBlob = null;
+}
+
+function clearInput() {
+  document.getElementById("wordInput").value = "";
+  setStatus("输入框已清空。");
+}
+
+function normalizeText(text) {
+  return text
+    .replace(/\u00a0/g, " ")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[，]/g, ",")
+    .replace(/[？]/g, "?")
+    .replace(/[！]/g, "!")
+    .replace(/[。]/g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function removeSerialPrefix(text) {
+  return text
+    .replace(/^[\s　]*(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[\.\、\)）:：-]*[\s　]*/g, "")
+    .trim();
+}
+
+function parseLine(line) {
+  const raw = line.trim();
+  if (!raw) return null;
+
+  // 只接受带序号的行：1. / 1、 / 1） / ①
+  if (!/^[\s　]*(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[\.\、\)）:：-]+[\s　]*/.test(raw)) return null;
+
+  let text = normalizeText(removeSerialPrefix(raw));
+  if (!text) return null;
+
+  // 去掉常见的行尾杂符号
+  text = text.replace(/^[\-—–•\s]+|[\s]+$/g, "");
+
+  let en = text;
+  let zh = "";
+
+  // 支持：spring 春天 / What's the weather like? 天气怎么样？
+  const match = text.match(/^([A-Za-z][A-Za-z\s,'?.!]+?)\s+([\u4e00-\u9fa5].*)$/);
+  if (match) {
+    en = match[1].trim();
+    zh = match[2].trim();
+  }
+
+  // 自动过滤明显不是英语词句的内容
+  if (!/[A-Za-z]/.test(en)) return null;
+
+  if (!zh) zh = lookupZh(en);
+  return [en, zh];
+}
+
+function extractNumberedItems(raw) {
+  const lines = raw.split(/\n+/);
+  const result = [];
+
+  for (const line of lines) {
+    const parsed = parseLine(line);
+    if (parsed) result.push(parsed);
+  }
+
+  return result;
+}
+
+function generateCards() {
+  const raw = document.getElementById("wordInput").value;
+  const parsed = extractNumberedItems(raw);
+
+  if (!parsed.length) {
+    setStatus("没有识别到带序号的单词或句子。请确认每行类似：1. spring");
+    return;
+  }
+
+  items = parsed;
+  current = null;
+  currentIndex = -1;
+  document.getElementById("currentEn").textContent = `已生成 ${items.length} 个卡片`;
+  document.getElementById("currentZh").textContent = "";
+  document.getElementById("search").value = "";
+  render();
+  updateProgress();
+  setStatus(`已从整段内容中提取 ${items.length} 个带序号项目，并自动补充了已知中文释义。`);
+}
+
+async function createAudioBlob(text, voice, speed) {
+  const response = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: text,
+      voice: voice,
+      speed: Number(speed),
+      pitch: "0",
+      style: "general",
+      volume: "0"
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error("接口返回错误：" + response.status + " " + errText.slice(0, 80));
+  }
+
+  const blob = await response.blob();
+  if (!blob || blob.size < 100) throw new Error("生成的音频为空");
+  return blob;
+}
+
+function playBlob(blob) {
+  return new Promise((resolve, reject) => {
+    stopSpeak();
+    cleanupBlobUrl();
+
+    lastBlob = blob;
+    lastBlobUrl = URL.createObjectURL(blob);
+    const audio = new Audio(lastBlobUrl);
+    currentAudio = audio;
+
+    audio.onended = resolve;
+    audio.onerror = () => reject(new Error("音频播放失败"));
+    audio.play().catch(reject);
+  });
+}
+
+async function speakOne(text, voice, speed, label) {
+  if (!text) return;
+  setStatus("正在生成：" + label);
+  const blob = await createAudioBlob(text, voice, speed);
+  setStatus("正在播放：" + label);
+  await playBlob(blob);
+}
+
+async function speak(en, zh) {
+  current = [en, zh];
+  document.getElementById("currentEn").textContent = en;
+  if (!zh) zh = lookupZh(en);
+  current = [en, zh];
+  document.getElementById("currentZh").textContent = zh || "暂无中文释义";
+
+  const enVoice = document.getElementById("enVoice").value;
+  const zhVoice = document.getElementById("zhVoice").value;
+  const speed = Number(document.getElementById("speed").value || 1);
+  const mode = document.getElementById("mode").value;
+
+  try {
+    await speakOne(en, enVoice, speed, "英文");
+    if (mode === "twice-cn") {
+      await new Promise(r => setTimeout(r, 300));
+      await speakOne(en, enVoice, Math.max(0.5, speed - 0.18), "英文慢速");
+    }
+    if (mode !== "en-only" && zh) {
+      await new Promise(r => setTimeout(r, 300));
+      await speakOne(zh, zhVoice, 1.0, "中文");
+    }
+    setStatus("完成");
+    setTimeout(() => setStatus(""), 900);
+  } catch (err) {
+    console.error(err);
+    setStatus("没播放成功：" + err.message + "。可以换个声音，或检查网络。");
+  }
+}
+
+function testApi() {
+  speak("It's sunny.", "天气晴朗。");
+}
+
+function repeatCurrent() {
+  if (current) speak(current[0], current[1]);
+  else setStatus("还没有当前单词，先生成卡片再点一个卡片或点“下一个”。");
+}
+
+function nextWord() {
+  if (!items.length) {
+    setStatus("还没有卡片，请先粘贴内容并生成卡片。");
+    return;
+  }
+  currentIndex = (currentIndex + 1) % items.length;
+  updateProgress();
+  const [en, zh] = items[currentIndex];
+  speak(en, zh);
+}
+
+function resetSequence() {
+  currentIndex = -1;
+  current = null;
+  document.getElementById("currentEn").textContent = "已重置，点“下一个”开始";
+  document.getElementById("currentZh").textContent = "";
+  updateProgress();
+  setStatus("顺序已重置。");
+}
+
+function updateProgress() {
+  const progress = document.getElementById("progress");
+  if (!items.length) {
+    progress.textContent = "暂无卡片";
+  } else if (currentIndex < 0) {
+    progress.textContent = `准备开始：共 ${items.length} 个`;
+  } else {
+    progress.textContent = `第 ${currentIndex + 1} / ${items.length} 个`;
+  }
+}
+
+function toggleCards() {
+  isHiddenMode = !isHiddenMode;
+  document.body.classList.toggle("hide-cards", isHiddenMode);
+  document.getElementById("toggleCardsBtn").textContent = isHiddenMode ? "显示单词卡片" : "隐藏单词卡片";
+
+  if (isHiddenMode) {
+    updateProgress();
+    setStatus("听写模式已开启。点击“下一个”按顺序报单词。");
+  } else {
+    setStatus("卡片已显示，可以粘贴新内容或点任意卡片练习。");
+  }
+}
+
+async function downloadCurrent() {
+  if (!current) {
+    setStatus("先点一个单词或句子，再下载。");
+    return;
+  }
+  try {
+    const enVoice = document.getElementById("enVoice").value;
+    const speed = Number(document.getElementById("speed").value || 1);
+    const blob = await createAudioBlob(current[0], enVoice, speed);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = current[0].replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "") + ".mp3";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus("已开始下载当前英文音频。");
+  } catch (err) {
+    setStatus("下载失败：" + err.message);
+  }
+}
+
+function render() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+
+  if (!items.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;color:#c8d7e8;text-align:center;padding:22px;">还没有卡片，先粘贴内容并生成。</div>';
+    return;
+  }
+
+  items
+    .filter(([en, zh]) => !q || en.toLowerCase().includes(q) || (zh || "").includes(q))
+    .forEach(([en, zh]) => {
+      const btn = document.createElement("button");
+      btn.className = "item";
+      btn.onclick = () => {
+        const idx = items.findIndex(x => x[0] === en && x[1] === zh);
+        if (idx >= 0) {
+          currentIndex = idx;
+          updateProgress();
+        }
+        speak(en, zh);
+      };
+      btn.innerHTML = `<div class="en">${en}</div><div class="zh">${zh || "点击听写"}</div>`;
+      grid.appendChild(btn);
+    });
+}
+
+render();
+updateProgress();
+</script>
+</body>
+</html>
