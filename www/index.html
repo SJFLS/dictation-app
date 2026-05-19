@@ -214,6 +214,13 @@
         </div>
       </div>
 
+      <div class="controls">
+        <div>
+          <div class="label">每段之间停顿：<span id="gapText">0.3</span> 秒</div>
+          <input id="gap" type="range" min="0" max="3" step="0.1" value="0.3" oninput="gapText.textContent=this.value">
+        </div>
+      </div>
+
       <div class="row">
         <button class="tool primary" onclick="testApi()">测试接口</button>
         <button class="tool" onclick="downloadCurrent()">下载当前音频</button>
@@ -491,15 +498,16 @@ async function speak(en, zh) {
   const zhVoice = document.getElementById("zhVoice").value;
   const speed = Number(document.getElementById("speed").value || 1);
   const mode = document.getElementById("mode").value;
+  const gapMs = Math.round(Number(document.getElementById("gap").value || 0.3) * 1000);
 
   try {
     await speakOne(en, enVoice, speed, "英文");
     if (mode === "twice-cn") {
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, gapMs));
       await speakOne(en, enVoice, Math.max(0.5, speed - 0.18), "英文慢速");
     }
     if (mode !== "en-only" && zh) {
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, gapMs));
       await speakOne(zh, zhVoice, 1.0, "中文");
     }
     setStatus("完成");
