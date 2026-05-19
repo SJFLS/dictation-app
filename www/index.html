@@ -75,20 +75,37 @@
     border: 0; border-radius: 18px; background: #fff; color: #07172d;
     padding: 14px; min-height: 82px; text-align: left;
     box-shadow: 0 8px 18px rgba(0,0,0,.16);
+    transition: transform .12s ease, box-shadow .12s ease, background .15s ease, outline-color .15s ease;
+    outline: 3px solid transparent;
+    cursor: pointer;
   }
-  button.item:active { transform: scale(.98); }
+  button.item:active { transform: scale(.96); box-shadow: 0 4px 10px rgba(0,0,0,.2); }
+  button.item.selected {
+    background: #dff6ff;
+    outline: 3px solid #4ec6ff;
+    box-shadow: 0 10px 24px rgba(78,198,255,.35);
+  }
   .en { font-size: 19px; font-weight: 700; line-height: 1.25; }
   .zh { font-size: 14px; color: #526070; margin-top: 5px; }
   .tool {
     border: 0; border-radius: 16px; padding: 12px;
     background: rgba(255,255,255,.16); color: white; font-size: 15px;
+    transition: transform .1s ease, background .15s ease, box-shadow .12s ease, color .15s ease;
+    cursor: pointer;
   }
+  .tool:active { transform: scale(.96); background: rgba(255,255,255,.28); }
   .primary { background: #dff6ff; color: #07172d; font-weight: 700; }
+  .primary:active { background: #b8ecff; }
   .danger { background: rgba(255,255,255,.08); color: #fff; }
-  .next-btn {
+
+  .nav-row {
     display: none;
-    width: 100%;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
     margin: 14px 0;
+  }
+  body.hide-cards .nav-row { display: grid; }
+  .nav-btn {
     border: 0;
     border-radius: 22px;
     padding: 18px 16px;
@@ -97,8 +114,22 @@
     font-size: 22px;
     font-weight: 800;
     box-shadow: 0 10px 22px rgba(0,0,0,.18);
+    transition: transform .1s ease, background .15s ease, box-shadow .12s ease;
+    cursor: pointer;
   }
-  body.hide-cards .next-btn { display: block; }
+  .nav-btn:active {
+    transform: scale(.96);
+    background: #9fe2ff;
+    box-shadow: 0 4px 10px rgba(0,0,0,.22);
+  }
+  .nav-btn.secondary {
+    background: rgba(255,255,255,.16);
+    color: #fff;
+  }
+  .nav-btn.secondary:active {
+    background: rgba(255,255,255,.32);
+  }
+
   .progress {
     display: none;
     text-align: center;
@@ -149,6 +180,12 @@
         <button class="tool" onclick="stopSpeak()">停止</button>
       </div>
     </div>
+
+    <div class="nav-row">
+      <button id="prevBtn" class="nav-btn secondary" onclick="prevWord()">上一个</button>
+      <button id="nextBtn" class="nav-btn" onclick="nextWord()">下一个</button>
+    </div>
+    <div id="progress" class="progress">准备开始</div>
 
     <div class="panel">
       <div class="controls">
@@ -202,15 +239,14 @@
       </div>
     </div>
 
-    <button id="nextBtn" class="next-btn" onclick="nextWord()">下一个</button>
-    <div id="progress" class="progress">准备开始</div>
-
     <input id="search" placeholder="搜索单词 / 句子..." oninput="render()" />
     <div class="grid" id="grid"></div>
   </div>
 
 <script>
 const API = "https://tts.wangwangit.com/v1/audio/speech";
+const STORAGE_KEY_RAW = "dictation_raw_input_v1";
+const STORAGE_KEY_ITEMS = "dictation_items_v1";
 
 const zhDict = {
   "spring": "春天",
@@ -281,7 +317,36 @@ function cleanupBlobUrl() {
 
 function clearInput() {
   document.getElementById("wordInput").value = "";
+  try { localStorage.removeItem(STORAGE_KEY_RAW); } catch (e) {}
   setStatus("输入框已清空。");
+}
+
+function saveState() {
+  try {
+    const raw = document.getElementById("wordInput").value;
+    localStorage.setItem(STORAGE_KEY_RAW, raw);
+    localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
+  } catch (e) {
+    console.warn("保存失败", e);
+  }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_RAW);
+    const itemsJson = localStorage.getItem(STORAGE_KEY_ITEMS);
+    if (raw) document.getElementById("wordInput").value = raw;
+    if (itemsJson) {
+      const parsed = JSON.parse(itemsJson);
+      if (Array.isArray(parsed) && parsed.length) {
+        items = parsed;
+        document.getElementById("currentEn").textContent = `上次已生成 ${items.length} 个卡片`;
+        document.getElementById("currentZh").textContent = "点任意卡片或“下一个”开始";
+      }
+    }
+  } catch (e) {
+    console.warn("读取失败", e);
+  }
 }
 
 function normalizeText(text) {
@@ -362,7 +427,8 @@ function generateCards() {
   document.getElementById("search").value = "";
   render();
   updateProgress();
-  setStatus(`已从整段内容中提取 ${items.length} 个带序号项目，并自动补充了已知中文释义。`);
+  saveState();
+  setStatus(`已从整段内容中提取 ${items.length} 个带序号项目，并自动补充了已知中文释义。已保存，下次打开还在。`);
 }
 
 async function createAudioBlob(text, voice, speed) {
@@ -419,6 +485,7 @@ async function speak(en, zh) {
   if (!zh) zh = lookupZh(en);
   current = [en, zh];
   document.getElementById("currentZh").textContent = zh || "暂无中文释义";
+  updateSelectedCard();
 
   const enVoice = document.getElementById("enVoice").value;
   const zhVoice = document.getElementById("zhVoice").value;
@@ -463,12 +530,24 @@ function nextWord() {
   speak(en, zh);
 }
 
+function prevWord() {
+  if (!items.length) {
+    setStatus("还没有卡片，请先粘贴内容并生成卡片。");
+    return;
+  }
+  currentIndex = (currentIndex - 1 + items.length) % items.length;
+  updateProgress();
+  const [en, zh] = items[currentIndex];
+  speak(en, zh);
+}
+
 function resetSequence() {
   currentIndex = -1;
   current = null;
   document.getElementById("currentEn").textContent = "已重置，点“下一个”开始";
   document.getElementById("currentZh").textContent = "";
   updateProgress();
+  updateSelectedCard();
   setStatus("顺序已重置。");
 }
 
@@ -490,7 +569,7 @@ function toggleCards() {
 
   if (isHiddenMode) {
     updateProgress();
-    setStatus("听写模式已开启。点击“下一个”按顺序报单词。");
+    setStatus("听写模式已开启。点击“上一个/下一个”切换。");
   } else {
     setStatus("卡片已显示，可以粘贴新内容或点任意卡片练习。");
   }
@@ -519,6 +598,17 @@ async function downloadCurrent() {
   }
 }
 
+function updateSelectedCard() {
+  const grid = document.getElementById("grid");
+  if (!grid) return;
+  const btns = grid.querySelectorAll("button.item");
+  btns.forEach(btn => {
+    const idx = Number(btn.dataset.idx);
+    if (idx === currentIndex) btn.classList.add("selected");
+    else btn.classList.remove("selected");
+  });
+}
+
 function render() {
   const q = document.getElementById("search").value.trim().toLowerCase();
   const grid = document.getElementById("grid");
@@ -529,24 +619,34 @@ function render() {
     return;
   }
 
-  items
-    .filter(([en, zh]) => !q || en.toLowerCase().includes(q) || (zh || "").includes(q))
-    .forEach(([en, zh]) => {
-      const btn = document.createElement("button");
-      btn.className = "item";
-      btn.onclick = () => {
-        const idx = items.findIndex(x => x[0] === en && x[1] === zh);
-        if (idx >= 0) {
-          currentIndex = idx;
-          updateProgress();
-        }
-        speak(en, zh);
-      };
-      btn.innerHTML = `<div class="en">${en}</div><div class="zh">${zh || "点击听写"}</div>`;
-      grid.appendChild(btn);
-    });
+  items.forEach(([en, zh], idx) => {
+    if (q && !en.toLowerCase().includes(q) && !(zh || "").includes(q)) return;
+    const btn = document.createElement("button");
+    btn.className = "item";
+    btn.dataset.idx = idx;
+    if (idx === currentIndex) btn.classList.add("selected");
+    btn.onclick = () => {
+      currentIndex = idx;
+      updateProgress();
+      updateSelectedCard();
+      speak(en, zh);
+    };
+    btn.innerHTML = `<div class="en">${en}</div><div class="zh">${zh || "点击听写"}</div>`;
+    grid.appendChild(btn);
+  });
 }
 
+// 输入框内容实时保存
+document.addEventListener("DOMContentLoaded", () => {
+  const input = document.getElementById("wordInput");
+  if (input) {
+    input.addEventListener("input", () => {
+      try { localStorage.setItem(STORAGE_KEY_RAW, input.value); } catch (e) {}
+    });
+  }
+});
+
+loadState();
 render();
 updateProgress();
 </script>
