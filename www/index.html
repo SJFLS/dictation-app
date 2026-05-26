@@ -71,26 +71,99 @@
   body.hide-cards #search,
   body.hide-cards #grid,
   body.hide-cards #inputPanel { display: none; }
-  button.item {
+  .item {
+    position: relative;
     border: 0; border-radius: 18px; background: #fff; color: #07172d;
     padding: 14px; min-height: 82px; text-align: left;
     box-shadow: 0 8px 18px rgba(0,0,0,.16);
     transition: transform .12s ease, box-shadow .12s ease, background .15s ease, outline-color .15s ease;
     outline: 3px solid transparent;
     cursor: pointer;
+    display: flex; flex-direction: column;
   }
-  button.item:active { transform: scale(.96); box-shadow: 0 4px 10px rgba(0,0,0,.2); }
-  button.item.selected {
+  .item:active { transform: scale(.97); box-shadow: 0 4px 10px rgba(0,0,0,.2); }
+  .item.selected {
     background: #dff6ff;
     outline: 3px solid #4ec6ff;
     box-shadow: 0 10px 24px rgba(78,198,255,.35);
   }
-  .en { font-size: 19px; font-weight: 700; line-height: 1.25; }
-  .zh { font-size: 14px; color: #526070; margin-top: 5px; }
+  .en { font-size: 19px; font-weight: 700; line-height: 1.25; padding-right: 28px; }
+  .zh { font-size: 14px; color: #526070; margin-top: 5px; line-height: 1.4; padding-right: 28px; word-break: break-word; }
   /* 隐藏中文释义模式 */
   body.hide-zh .zh,
   body.hide-zh #currentZh { visibility: hidden; }
   .zh.loading { color: #8a99ad; font-style: italic; }
+  /* 编辑按钮：右上角小图标 */
+  .edit-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 8px;
+    background: rgba(0,0,0,.06);
+    color: #4a5b73;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .15s ease, transform .1s ease;
+  }
+  .edit-btn:hover { background: rgba(0,0,0,.12); }
+  .edit-btn:active { transform: scale(.9); background: rgba(0,0,0,.18); }
+  .item.selected .edit-btn { background: rgba(7,23,45,.1); }
+  /* 编辑模态层 */
+  .edit-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 18px;
+  }
+  .edit-mask.show { display: flex; }
+  .edit-dialog {
+    background: #0c2240;
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 20px;
+    padding: 18px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .edit-dialog .label { color: #9fb6d2; font-size: 13px; margin-bottom: 6px; }
+  .edit-dialog .en-preview {
+    font-size: 18px; font-weight: 700; color: #fff;
+    margin-bottom: 12px; word-break: break-word; line-height: 1.3;
+  }
+  .edit-dialog textarea {
+    width: 100%; min-height: 90px;
+    border-radius: 14px;
+    border: 0;
+    padding: 12px;
+    font-size: 16px;
+    font-family: inherit;
+    line-height: 1.5;
+    resize: vertical;
+    background: #fff;
+    color: #07172d;
+  }
+  .edit-dialog .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .edit-dialog .actions .row3 {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
   .tool {
     border: 0; border-radius: 16px; padding: 12px;
     background: rgba(255,255,255,.16); color: white; font-size: 15px;
@@ -257,6 +330,22 @@
     <div class="grid" id="grid"></div>
   </div>
 
+  <div id="editMask" class="edit-mask" onclick="if(event.target===this)closeEdit()">
+    <div class="edit-dialog">
+      <div class="label">编辑中文释义</div>
+      <div class="en-preview" id="editEn"></div>
+      <div class="label">中文</div>
+      <textarea id="editZh" placeholder="输入或修改中文释义"></textarea>
+      <div class="actions">
+        <button class="tool" onclick="retranslateEditing()">重新翻译</button>
+        <button class="tool" onclick="closeEdit()">取消</button>
+        <div class="row3">
+          <button class="tool primary" onclick="saveEdit()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
 const API = "https://tts.wangwangit.com/v1/audio/speech";
 const STORAGE_KEY_RAW = "dictation_raw_input_v1";
@@ -326,7 +415,34 @@ function saveTransCache() {
   } catch (e) {}
 }
 
-// 翻译英文 -> 中文（使用国内接口：有道在线翻译演示接口为主）
+// 批量翻译英文 -> 中文（腾讯交互翻译 Transmart，国内最快、一次最多几十条）
+async function translateBatch(texts) {
+  if (!Array.isArray(texts) || !texts.length) return [];
+  try {
+    const res = await fetch("https://transmart.qq.com/api/imt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        header: { fn: "auto_translation", client_key: "browser-firefox-1.0.0" },
+        type: "plain",
+        model_category: "normal",
+        source: { lang: "en", text_list: texts },
+        target: { lang: "zh" }
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.auto_translation)) {
+        return data.auto_translation.map(s => (s || "").trim());
+      }
+    }
+  } catch (e) {
+    console.warn("腾讯 Transmart 批量翻译失败：", e);
+  }
+  return new Array(texts.length).fill("");
+}
+
+// 翻译单条（备用 / 用于编辑时）
 async function translateOne(en) {
   const text = (en || "").trim();
   if (!text) return "";
@@ -334,40 +450,22 @@ async function translateOne(en) {
   if (zhDict[key]) return zhDict[key];
   if (transCache[key]) return transCache[key];
 
-  // 主接口：有道在线翻译演示接口（aidemo.youdao.com，国内速度快、免费、CORS 开放）
-  try {
-    const body = new URLSearchParams({
-      q: text,
-      from: "en",
-      to: "zh-CHS"
-    });
-    const res = await fetch("https://aidemo.youdao.com/trans", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString()
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.errorCode === "0" && Array.isArray(data.translation) && data.translation.length) {
-        const zh = (data.translation[0] || "").trim();
-        if (zh && zh.toLowerCase() !== text.toLowerCase()) {
-          transCache[key] = zh;
-          saveTransCache();
-          return zh;
-        }
-      }
-    }
-  } catch (e) {
-    console.warn("有道翻译失败：", text, e);
+  // 主接口：腾讯 Transmart
+  const arr = await translateBatch([text]);
+  let zh = (arr[0] || "").trim();
+  if (zh && zh.toLowerCase() !== text.toLowerCase()) {
+    transCache[key] = zh;
+    saveTransCache();
+    return zh;
   }
 
-  // 备用：MyMemory（无 key、免费）
+  // 备用：MyMemory
   try {
     const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) + "&langpair=en|zh-CN";
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
-      let zh = (data && data.responseData && data.responseData.translatedText || "").trim();
+      zh = (data && data.responseData && data.responseData.translatedText || "").trim();
       if (zh && zh.toLowerCase() !== text.toLowerCase() && !/^[A-Z\s]+$/.test(zh)) {
         zh = zh.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
         transCache[key] = zh;
@@ -378,11 +476,10 @@ async function translateOne(en) {
   } catch (e) {
     console.warn("MyMemory 翻译失败：", text, e);
   }
-
   return "";
 }
 
-// 批量翻译没有中文释义的卡片
+// 批量翻译没有中文释义的卡片（force=true 则全部重新翻译）
 async function translateMissing(force) {
   if (!items.length) return;
   const todo = [];
@@ -391,27 +488,35 @@ async function translateMissing(force) {
   });
   if (!todo.length) return;
 
-  setStatus(`正在自动翻译 ${todo.length} 个英文项...`);
+  setStatus(`腾讯翻译中，共 ${todo.length} 条（一次性批量）...`);
+
+  // 腾讯单次最多支持很多条，但为了稳妥按 50 条一批拆
+  const CHUNK = 50;
   let done = 0;
-  // 并发 4 个一组
-  const concurrency = 4;
-  for (let i = 0; i < todo.length; i += concurrency) {
-    const batch = todo.slice(i, i + concurrency);
-    await Promise.all(batch.map(async (idx) => {
-      const [en] = items[idx];
-      const zh = await translateOne(en);
-      if (zh) items[idx][1] = zh;
-      done++;
-      setStatus(`翻译中：${done} / ${todo.length}`);
-      render();
-      if (idx === currentIndex) {
-        document.getElementById("currentZh").textContent = items[idx][1] || "暂无中文释义";
+  for (let i = 0; i < todo.length; i += CHUNK) {
+    const idxBatch = todo.slice(i, i + CHUNK);
+    const enBatch = idxBatch.map(idx => items[idx][0]);
+    const zhBatch = await translateBatch(enBatch);
+
+    idxBatch.forEach((idx, k) => {
+      const zh = (zhBatch[k] || "").trim();
+      if (zh && zh.toLowerCase() !== items[idx][0].toLowerCase()) {
+        items[idx][1] = zh;
+        const key = normalizeText(items[idx][0]).toLowerCase().replace(/\s+/g, " ");
+        transCache[key] = zh;
       }
-    }));
+      done++;
+    });
+    saveTransCache();
+    render();
+    if (currentIndex >= 0 && idxBatch.includes(currentIndex)) {
+      document.getElementById("currentZh").textContent = items[currentIndex][1] || "暂无中文释义";
+    }
+    setStatus(`翻译进度：${done} / ${todo.length}`);
   }
   saveState();
-  setStatus(`翻译完成，共 ${done} 个项目已补充中文。`);
-  setTimeout(() => setStatus(""), 1500);
+  setStatus(`翻译完成，共 ${done} 条已补充中文。点卡片上的"编辑"可以手动改。`);
+  setTimeout(() => setStatus(""), 2500);
 }
 
 async function retranslateAll() {
@@ -811,7 +916,7 @@ async function downloadCurrent() {
 function updateSelectedCard() {
   const grid = document.getElementById("grid");
   if (!grid) return;
-  const btns = grid.querySelectorAll("button.item");
+  const btns = grid.querySelectorAll(".item");
   btns.forEach(btn => {
     const idx = Number(btn.dataset.idx);
     if (idx === currentIndex) btn.classList.add("selected");
@@ -831,20 +936,99 @@ function render() {
 
   items.forEach(([en, zh], idx) => {
     if (q && !en.toLowerCase().includes(q) && !(zh || "").includes(q)) return;
-    const btn = document.createElement("button");
-    btn.className = "item";
-    btn.dataset.idx = idx;
-    if (idx === currentIndex) btn.classList.add("selected");
-    btn.onclick = () => {
+    const card = document.createElement("div");
+    card.className = "item";
+    card.dataset.idx = idx;
+    if (idx === currentIndex) card.classList.add("selected");
+
+    const enDiv = document.createElement("div");
+    enDiv.className = "en";
+    enDiv.textContent = en;
+
+    const zhDiv = document.createElement("div");
+    zhDiv.className = "zh";
+    zhDiv.textContent = zh || "点击听写";
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "edit-btn";
+    editBtn.type = "button";
+    editBtn.title = "编辑中文释义";
+    editBtn.textContent = "✎";
+    editBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      openEdit(idx);
+    };
+
+    card.appendChild(editBtn);
+    card.appendChild(enDiv);
+    card.appendChild(zhDiv);
+
+    card.onclick = () => {
       currentIndex = idx;
       updateProgress();
       updateSelectedCard();
       saveSettings();
-      speak(en, zh);
+      // 重新取一次（编辑后可能变化）
+      const [e2, z2] = items[idx];
+      speak(e2, z2);
     };
-    btn.innerHTML = `<div class="en">${en}</div><div class="zh">${zh || "点击听写"}</div>`;
-    grid.appendChild(btn);
+    grid.appendChild(card);
   });
+}
+
+// 编辑中文释义
+let editingIndex = -1;
+function openEdit(idx) {
+  if (idx < 0 || idx >= items.length) return;
+  editingIndex = idx;
+  document.getElementById("editEn").textContent = items[idx][0];
+  document.getElementById("editZh").value = items[idx][1] || "";
+  document.getElementById("editMask").classList.add("show");
+  setTimeout(() => document.getElementById("editZh").focus(), 50);
+}
+
+function closeEdit() {
+  editingIndex = -1;
+  document.getElementById("editMask").classList.remove("show");
+}
+
+function saveEdit() {
+  if (editingIndex < 0) return closeEdit();
+  const newZh = document.getElementById("editZh").value.trim();
+  const [en] = items[editingIndex];
+  items[editingIndex][1] = newZh;
+  // 同步更新翻译缓存，下次相同英文就用编辑后的版本
+  const key = normalizeText(en).toLowerCase().replace(/\s+/g, " ");
+  if (newZh) {
+    transCache[key] = newZh;
+    saveTransCache();
+  } else {
+    delete transCache[key];
+    saveTransCache();
+  }
+  if (editingIndex === currentIndex) {
+    document.getElementById("currentZh").textContent = newZh || "暂无中文释义";
+  }
+  saveState();
+  render();
+  setStatus(`已保存第 ${editingIndex + 1} 个卡片的中文释义。`);
+  setTimeout(() => setStatus(""), 1500);
+  closeEdit();
+}
+
+async function retranslateEditing() {
+  if (editingIndex < 0) return;
+  const en = items[editingIndex][0];
+  const textarea = document.getElementById("editZh");
+  textarea.value = "翻译中...";
+  textarea.disabled = true;
+  // 清掉缓存让 translateOne 真正重新去请求
+  const key = normalizeText(en).toLowerCase().replace(/\s+/g, " ");
+  delete transCache[key];
+  const zh = await translateOne(en);
+  textarea.disabled = false;
+  textarea.value = zh || "";
+  textarea.focus();
 }
 
 // 输入框内容实时保存
