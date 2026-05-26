@@ -87,6 +87,10 @@
   }
   .en { font-size: 19px; font-weight: 700; line-height: 1.25; }
   .zh { font-size: 14px; color: #526070; margin-top: 5px; }
+  /* 隐藏中文释义模式 */
+  body.hide-zh .zh,
+  body.hide-zh #currentZh { visibility: hidden; }
+  .zh.loading { color: #8a99ad; font-style: italic; }
   .tool {
     border: 0; border-radius: 16px; padding: 12px;
     background: rgba(255,255,255,.16); color: white; font-size: 15px;
@@ -226,6 +230,10 @@
         <button id="toggleCardsBtn" class="tool primary" onclick="toggleCards()">隐藏单词卡片</button>
         <button class="tool" onclick="resetSequence()">顺序重置</button>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="toggleZhBtn" class="tool" onclick="toggleZh()">隐藏中文释义</button>
+        <button class="tool" onclick="retranslateAll()">重新翻译全部</button>
+      </div>
     </div>
 
     <div id="currentPanel" class="panel">
@@ -254,9 +262,14 @@ const API = "https://tts.wangwangit.com/v1/audio/speech";
 const STORAGE_KEY_RAW = "dictation_raw_input_v1";
 const STORAGE_KEY_ITEMS = "dictation_items_v1";
 const STORAGE_KEY_SETTINGS = "dictation_settings_v1";
+const STORAGE_KEY_TRANS_CACHE = "dictation_trans_cache_v1";
 
 // 需要持久化的设置控件 id 列表
 const SETTING_IDS = ["enVoice", "zhVoice", "speed", "mode", "gap", "search"];
+
+// 翻译缓存：{en_lowercase: zh}
+let transCache = {};
+let isHiddenZh = false;
 
 const zhDict = {
   "spring": "春天",
@@ -295,7 +308,131 @@ const zhDict = {
 
 function lookupZh(en) {
   const key = normalizeText(en).toLowerCase().replace(/\s+/g, " ");
-  return zhDict[key] || "";
+  return zhDict[key] || transCache[key] || "";
+}
+
+function loadTransCache() {
+  try {
+    const json = localStorage.getItem(STORAGE_KEY_TRANS_CACHE);
+    if (json) transCache = JSON.parse(json) || {};
+  } catch (e) {
+    transCache = {};
+  }
+}
+
+function saveTransCache() {
+  try {
+    localStorage.setItem(STORAGE_KEY_TRANS_CACHE, JSON.stringify(transCache));
+  } catch (e) {}
+}
+
+// 翻译英文 -> 中文（多免费接口兜底，不使用 Google）
+async function translateOne(en) {
+  const text = (en || "").trim();
+  if (!text) return "";
+  const key = normalizeText(text).toLowerCase().replace(/\s+/g, " ");
+  if (zhDict[key]) return zhDict[key];
+  if (transCache[key]) return transCache[key];
+
+  // 主接口：MyMemory（完全免费、无需 key、支持 CORS）
+  try {
+    const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) + "&langpair=en|zh-CN";
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      let zh = (data && data.responseData && data.responseData.translatedText || "").trim();
+      // MyMemory 偶尔会返回 "PLEASE SELECT TWO DISTINCT LANGUAGES" 之类的提示，过滤掉
+      if (zh && zh.toLowerCase() !== text.toLowerCase() && !/^[A-Z\s]+$/.test(zh)) {
+        // 解码 HTML 实体
+        zh = zh.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+        transCache[key] = zh;
+        saveTransCache();
+        return zh;
+      }
+    }
+  } catch (e) {
+    console.warn("MyMemory 翻译失败：", text, e);
+  }
+
+  // 备用1：LibreTranslate 公开实例
+  const libreHosts = [
+    "https://translate.fedilab.app",
+    "https://libretranslate.de",
+    "https://lt.vern.cc"
+  ];
+  for (const host of libreHosts) {
+    try {
+      const res = await fetch(host + "/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: text, source: "en", target: "zh", format: "text" })
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const zh = (d && d.translatedText || "").trim();
+        if (zh && zh.toLowerCase() !== text.toLowerCase()) {
+          transCache[key] = zh;
+          saveTransCache();
+          return zh;
+        }
+      }
+    } catch (e) {
+      // 继续尝试下一个
+    }
+  }
+
+  // 备用2：FreeDictionary 单词词典（只对单个英文单词有效）
+  if (/^[A-Za-z\-']+$/.test(text)) {
+    try {
+      const res = await fetch("https://api.dictionaryapi.dev/api/v2/entries/en/" + encodeURIComponent(text.toLowerCase()));
+      if (res.ok) {
+        const arr = await res.json();
+        // 词典返回的是英文释义，没有中文，跳过；这里仅作为占位
+      }
+    } catch (e) {}
+  }
+
+  return "";
+}
+
+// 批量翻译没有中文释义的卡片
+async function translateMissing(force) {
+  if (!items.length) return;
+  const todo = [];
+  items.forEach(([en, zh], idx) => {
+    if (force || !zh) todo.push(idx);
+  });
+  if (!todo.length) return;
+
+  setStatus(`正在自动翻译 ${todo.length} 个英文项...`);
+  let done = 0;
+  // 并发 4 个一组
+  const concurrency = 4;
+  for (let i = 0; i < todo.length; i += concurrency) {
+    const batch = todo.slice(i, i + concurrency);
+    await Promise.all(batch.map(async (idx) => {
+      const [en] = items[idx];
+      const zh = await translateOne(en);
+      if (zh) items[idx][1] = zh;
+      done++;
+      setStatus(`翻译中：${done} / ${todo.length}`);
+      render();
+      if (idx === currentIndex) {
+        document.getElementById("currentZh").textContent = items[idx][1] || "暂无中文释义";
+      }
+    }));
+  }
+  saveState();
+  setStatus(`翻译完成，共 ${done} 个项目已补充中文。`);
+  setTimeout(() => setStatus(""), 1500);
+}
+
+async function retranslateAll() {
+  if (!items.length) {
+    setStatus("还没有卡片，先生成卡片再翻译。");
+    return;
+  }
+  await translateMissing(true);
 }
 
 let items = [];
@@ -349,6 +486,7 @@ function saveSettings() {
       if (el) settings[id] = el.value;
     });
     settings.isHiddenMode = isHiddenMode;
+    settings.isHiddenZh = isHiddenZh;
     settings.currentIndex = currentIndex;
     localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
   } catch (e) {
@@ -379,6 +517,12 @@ function loadSettings() {
       document.body.classList.add("hide-cards");
       const btn = document.getElementById("toggleCardsBtn");
       if (btn) btn.textContent = "显示单词卡片";
+    }
+    if (settings.isHiddenZh) {
+      isHiddenZh = true;
+      document.body.classList.add("hide-zh");
+      const zbtn = document.getElementById("toggleZhBtn");
+      if (zbtn) zbtn.textContent = "显示中文释义";
     }
   } catch (e) {
     console.warn("读取设置失败", e);
@@ -474,7 +618,7 @@ function extractNumberedItems(raw) {
   return result;
 }
 
-function generateCards() {
+async function generateCards() {
   const raw = document.getElementById("wordInput").value;
   const parsed = extractNumberedItems(raw);
 
@@ -483,7 +627,7 @@ function generateCards() {
     return;
   }
 
-  items = parsed;
+  items = parsed.map(([en, zh]) => [en, zh || lookupZh(en)]);
   current = null;
   currentIndex = -1;
   document.getElementById("currentEn").textContent = `已生成 ${items.length} 个卡片`;
@@ -492,7 +636,9 @@ function generateCards() {
   render();
   updateProgress();
   saveState();
-  setStatus(`已从整段内容中提取 ${items.length} 个带序号项目，并自动补充了已知中文释义。已保存，下次打开还在。`);
+  setStatus(`已生成 ${items.length} 个卡片，准备自动翻译没有中文的项...`);
+  // 异步自动翻译没有中文释义的项
+  await translateMissing(false);
 }
 
 async function createAudioBlob(text, voice, speed) {
@@ -644,6 +790,14 @@ function toggleCards() {
   }
 }
 
+function toggleZh() {
+  isHiddenZh = !isHiddenZh;
+  document.body.classList.toggle("hide-zh", isHiddenZh);
+  document.getElementById("toggleZhBtn").textContent = isHiddenZh ? "显示中文释义" : "隐藏中文释义";
+  saveSettings();
+  setStatus(isHiddenZh ? "中文释义已隐藏。" : "中文释义已显示。");
+}
+
 async function downloadCurrent() {
   if (!current) {
     setStatus("先点一个单词或句子，再下载。");
@@ -716,6 +870,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+loadTransCache();
 loadState();
 loadSettings();
 bindSettingsAutosave();
