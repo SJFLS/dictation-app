@@ -326,7 +326,7 @@ function saveTransCache() {
   } catch (e) {}
 }
 
-// 翻译英文 -> 中文（多免费接口兜底，不使用 Google）
+// 翻译英文 -> 中文（使用国内接口：有道在线翻译演示接口为主）
 async function translateOne(en) {
   const text = (en || "").trim();
   if (!text) return "";
@@ -334,16 +334,41 @@ async function translateOne(en) {
   if (zhDict[key]) return zhDict[key];
   if (transCache[key]) return transCache[key];
 
-  // 主接口：MyMemory（完全免费、无需 key、支持 CORS）
+  // 主接口：有道在线翻译演示接口（aidemo.youdao.com，国内速度快、免费、CORS 开放）
+  try {
+    const body = new URLSearchParams({
+      q: text,
+      from: "en",
+      to: "zh-CHS"
+    });
+    const res = await fetch("https://aidemo.youdao.com/trans", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.errorCode === "0" && Array.isArray(data.translation) && data.translation.length) {
+        const zh = (data.translation[0] || "").trim();
+        if (zh && zh.toLowerCase() !== text.toLowerCase()) {
+          transCache[key] = zh;
+          saveTransCache();
+          return zh;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("有道翻译失败：", text, e);
+  }
+
+  // 备用：MyMemory（无 key、免费）
   try {
     const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) + "&langpair=en|zh-CN";
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
       let zh = (data && data.responseData && data.responseData.translatedText || "").trim();
-      // MyMemory 偶尔会返回 "PLEASE SELECT TWO DISTINCT LANGUAGES" 之类的提示，过滤掉
       if (zh && zh.toLowerCase() !== text.toLowerCase() && !/^[A-Z\s]+$/.test(zh)) {
-        // 解码 HTML 实体
         zh = zh.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
         transCache[key] = zh;
         saveTransCache();
@@ -352,44 +377,6 @@ async function translateOne(en) {
     }
   } catch (e) {
     console.warn("MyMemory 翻译失败：", text, e);
-  }
-
-  // 备用1：LibreTranslate 公开实例
-  const libreHosts = [
-    "https://translate.fedilab.app",
-    "https://libretranslate.de",
-    "https://lt.vern.cc"
-  ];
-  for (const host of libreHosts) {
-    try {
-      const res = await fetch(host + "/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: text, source: "en", target: "zh", format: "text" })
-      });
-      if (res.ok) {
-        const d = await res.json();
-        const zh = (d && d.translatedText || "").trim();
-        if (zh && zh.toLowerCase() !== text.toLowerCase()) {
-          transCache[key] = zh;
-          saveTransCache();
-          return zh;
-        }
-      }
-    } catch (e) {
-      // 继续尝试下一个
-    }
-  }
-
-  // 备用2：FreeDictionary 单词词典（只对单个英文单词有效）
-  if (/^[A-Za-z\-']+$/.test(text)) {
-    try {
-      const res = await fetch("https://api.dictionaryapi.dev/api/v2/entries/en/" + encodeURIComponent(text.toLowerCase()));
-      if (res.ok) {
-        const arr = await res.json();
-        // 词典返回的是英文释义，没有中文，跳过；这里仅作为占位
-      }
-    } catch (e) {}
   }
 
   return "";
