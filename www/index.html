@@ -229,12 +229,11 @@
     <div class="sub">粘贴一整段内容也可以，只会提取“带序号”的单词或句子，自动去掉标题、空行、结尾说明等无关内容。</div>
 
     <div class="tip">
-      支持自动提取：<br>
-      1. spring<br>
-      2、summer<br>
-      3）What's the weather like?<br>
-      4. spring 春天<br>
-      不带序号的“单词&短语部分 / 句子部分 / 需要我顺便……”会自动忽略。
+      支持自动提取（英文 + 中文之间任何分隔符都行）：<br>
+      1. spring &nbsp;&nbsp;/&nbsp;&nbsp; 2、summer &nbsp;&nbsp;/&nbsp;&nbsp; 3）spring 春天<br>
+      1.Monday 星期一 &nbsp;&nbsp;/&nbsp;&nbsp; 1.Monday-星期一 &nbsp;&nbsp;/&nbsp;&nbsp; 1.Monday：星期一<br>
+      1.Monday | 星期一 &nbsp;&nbsp;/&nbsp;&nbsp; 1.Monday(星期一) &nbsp;&nbsp;/&nbsp;&nbsp; 1.Monday（星期一）<br>
+      不带序号的"单词&短语部分 / 句子部分 / 需要我顺便……"会自动忽略。
     </div>
 
     <div id="inputPanel" class="panel">
@@ -714,7 +713,7 @@ function normalizeText(text) {
 
 function removeSerialPrefix(text) {
   return text
-    .replace(/^[\s　]*(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[\.\、\)）:：-]*[\s　]*/g, "")
+    .replace(/^[\s　]*(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[\s　]*[\.\、\)）:：\-－]*[\s　]*/g, "")
     .trim();
 }
 
@@ -722,23 +721,56 @@ function parseLine(line) {
   const raw = line.trim();
   if (!raw) return null;
 
-  // 只接受带序号的行：1. / 1、 / 1） / ①
-  if (!/^[\s　]*(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[\.\、\)）:：-]+[\s　]*/.test(raw)) return null;
+  // 只接受带序号的行：1. / 1、 / 1） / ①  也允许 1Monday（数字后没分隔直接英文）
+  if (!/^[\s　]*(?:\d+[\s　]*[\.\、\)）:：\-－]*|[①②③④⑤⑥⑦⑧⑨⑩])/.test(raw)) return null;
 
   let text = normalizeText(removeSerialPrefix(raw));
   if (!text) return null;
 
-  // 去掉常见的行尾杂符号
-  text = text.replace(/^[\-—–•\s]+|[\s]+$/g, "");
+  // 去掉首尾杂符号（连字符 / 项目符号 / 空白）
+  text = text.replace(/^[\-—–•\s]+|[\s\-—–•]+$/g, "");
 
   let en = text;
   let zh = "";
 
-  // 支持：spring 春天 / What's the weather like? 天气怎么样？
-  const match = text.match(/^([A-Za-z][A-Za-z\s,'?.!]+?)\s+([\u4e00-\u9fa5].*)$/);
-  if (match) {
-    en = match[1].trim();
-    zh = match[2].trim();
+  // 找到第一个中文字符的位置，把它前面的当英文、后面（含）的当中文
+  // 这样不管英文和中文之间是空格、tab、-、—、—、:、：、|、/、=、~、.、,、(、（、tab，全部支持
+  const cnRegex = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
+  const cnIdx = text.search(cnRegex);
+
+  if (cnIdx > 0) {
+    en = text.slice(0, cnIdx);
+    zh = text.slice(cnIdx);
+    // 切掉英文末尾的明确分隔符（不动单个的句末 . ? !）
+    // 1) 先剥空白
+    en = en.replace(/[\s\t]+$/g, "");
+    // 2) 反复剥单个分隔符：- — — : ：| / = ~ , ， ; ；· • ( （ [ 【
+    en = en.replace(/[\-—–:：\|\/=~,，;；·•\(（\[【]+$/g, "").trim();
+    // 3) 如果末尾是连续两个以上 . 或 ,，也清掉（避免出现 "Monday .." 这种）
+    en = en.replace(/[\.,，]{2,}$/g, "").trim();
+    // 4) 末尾的空白再清一次
+    en = en.replace(/[\s\t]+$/g, "");
+
+    // 中文开头：剥零碎符号 + 右括号
+    zh = zh.replace(/^[\s\-—–:：\|\/=~,，;；·•\)）\]】\t]+/g, "").trim();
+    // 如果整段中文被 () （） [] 【】 包围，去掉首尾括号
+    const wrapPairs = [["(", ")"], ["（", "）"], ["[", "]"], ["【", "】"]];
+    for (const [o, c] of wrapPairs) {
+      if (zh.startsWith(o) && zh.endsWith(c)) {
+        const inner = zh.slice(1, -1);
+        // 内部如果不再有相同的左括号则可安全去掉外层
+        if (!inner.includes(o)) {
+          zh = inner.trim();
+          break;
+        }
+      }
+    }
+    // 中文末尾的孤立右括号（没对应左括号的）清掉
+    const opens = (zh.match(/[\(（\[【]/g) || []).length;
+    const closes = (zh.match(/[\)）\]】]/g) || []).length;
+    if (closes > opens) {
+      zh = zh.replace(/[\)）\]】]+$/g, "").trim();
+    }
   }
 
   // 自动过滤明显不是英语词句的内容
