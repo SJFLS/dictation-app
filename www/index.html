@@ -307,6 +307,10 @@
         <button id="toggleZhBtn" class="tool" onclick="toggleZh()">隐藏中文释义</button>
         <button class="tool" onclick="retranslateAll()">重新翻译全部</button>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <button class="tool danger" onclick="clearAllData()">清空所有数据</button>
+        <button class="tool" onclick="clearTransCacheOnly()">清空翻译缓存</button>
+      </div>
     </div>
 
     <div id="currentPanel" class="panel">
@@ -525,6 +529,52 @@ async function retranslateAll() {
     return;
   }
   await translateMissing(true);
+}
+
+// 清空所有数据（卡片、输入、设置、翻译缓存）
+function clearAllData() {
+  const ok = confirm("确定要清空所有数据吗？\n\n会清掉：\n• 粘贴的输入内容\n• 已生成的全部卡片\n• 翻译缓存\n• 声音/速度/模式/搜索词等所有设置\n\n这个操作不可撤销。");
+  if (!ok) return;
+  try {
+    localStorage.removeItem(STORAGE_KEY_RAW);
+    localStorage.removeItem(STORAGE_KEY_ITEMS);
+    localStorage.removeItem(STORAGE_KEY_SETTINGS);
+    localStorage.removeItem(STORAGE_KEY_TRANS_CACHE);
+    // 兜底：把当前 localStorage 全清一遍（避免有遗漏的旧 key）
+    try { localStorage.clear(); } catch (e) {}
+  } catch (e) {
+    console.warn("清空失败", e);
+  }
+  // 内存状态也重置
+  items = [];
+  transCache = {};
+  current = null;
+  currentIndex = -1;
+  isHiddenMode = false;
+  isHiddenZh = false;
+  document.body.classList.remove("hide-cards", "hide-zh");
+  document.getElementById("wordInput").value = "";
+  document.getElementById("search").value = "";
+  document.getElementById("currentEn").textContent = "已清空，重新粘贴内容生成卡片";
+  document.getElementById("currentZh").textContent = "";
+  const tc = document.getElementById("toggleCardsBtn");
+  if (tc) tc.textContent = "隐藏单词卡片";
+  const tz = document.getElementById("toggleZhBtn");
+  if (tz) tz.textContent = "隐藏中文释义";
+  render();
+  updateProgress();
+  updateSelectedCard();
+  setStatus("已清空所有数据。");
+}
+
+// 只清翻译缓存（保留卡片和设置）
+function clearTransCacheOnly() {
+  const ok = confirm("确定要清空翻译缓存吗？\n\n下次翻译会重新调用接口，已生成的卡片中文不变。");
+  if (!ok) return;
+  transCache = {};
+  try { localStorage.removeItem(STORAGE_KEY_TRANS_CACHE); } catch (e) {}
+  setStatus("翻译缓存已清空。");
+  setTimeout(() => setStatus(""), 1500);
 }
 
 let items = [];
